@@ -374,3 +374,86 @@ label.full input {
   display: flex;
   gap: 10px;
 }
+
+/* ---------- 时段合并 ---------- */
+
+table.merge-grid {
+  min-width: 760px;
+}
+
+table.merge-grid td {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.merge-idx {
+  width: 70px;
+  white-space: nowrap;
+}
+
+.merge-label {
+  min-width: 140px;
+}
+
+.merge-act {
+  width: 60px;
+  white-space: nowrap;
+}
+
+table.merge-grid input {
+  width: 100%;
+  min-width: 96px;
+}
+
+table.merge-grid input[type="text"] {
+  min-width: 120px;
+}
+
+tr.invalid td {
+  background: #fdf3f3;
+}
+
+input.invalid {
+  border-color: var(--danger);
+  background: #fdf3f3;
+}
+
+.block-title {
+  margin: 16px 0 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+table.merge-out-grid {
+  min-width: 640px;
+}
+
+table.merge-out-grid td {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+td.src-cell {
+  white-space: normal;
+  line-height: 2;
+}
+
+.src-tag {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+  padding: 1px 8px;
+  border: 1px solid #bcd2f8;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11.5px;
+  cursor: default;
+}
+
+.merge-result .tag {
+  margin-left: 6px;
+}

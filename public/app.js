@@ -5,6 +5,7 @@ const state = {
   counts: { total: 0, dstCount: 0, noDstCount: 0 },
   editingId: '',
   lastConvert: null,
+  mergeRows: [],
 };
 
 const MONTHS = [
@@ -155,12 +156,15 @@ function renderZones() {
 }
 
 function renderConvertZoneOptions() {
-  const select = el('convert-zone');
-  const current = select.value;
-  select.innerHTML = state.zones
+  const options = state.zones
     .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}　${escapeHtml(item.displayName)}</option>`)
     .join('');
-  if (state.zones.some((item) => item.id === current)) select.value = current;
+  ['convert-zone', 'merge-zone'].forEach((id) => {
+    const select = el(id);
+    const current = select.value;
+    select.innerHTML = options;
+    if (state.zones.some((item) => item.id === current)) select.value = current;
+  });
 }
 
 function openZoneForm(zone) {
@@ -280,6 +284,143 @@ function renderConvert(result) {
   el('convert-empty').classList.toggle('hidden', result.results.length > 0);
 }
 
+// ---------- 时段合并 ----------
+
+let mergeSeq = 0;
+
+function addMergeRow(preset) {
+  state.mergeRows.push({
+    uid: `merge-row-${mergeSeq++}`,
+    startDate: preset && preset.startDate ? preset.startDate : '',
+    startTime: preset && preset.startTime ? preset.startTime : '',
+    endDate: preset && preset.endDate ? preset.endDate : '',
+    endTime: preset && preset.endTime ? preset.endTime : '',
+    label: preset && preset.label ? preset.label : '',
+  });
+  renderMergeRows();
+}
+
+function renderMergeRows() {
+  const body = el('merge-rows');
+  body.innerHTML = state.mergeRows.map((row, index) => `<tr data-merge-uid="${escapeHtml(row.uid)}" data-merge-index="${index}">
+      <td class="merge-idx mono">第 ${index + 1} 段</td>
+      <td><input type="date" data-merge-field="startDate" value="${escapeHtml(row.startDate)}"></td>
+      <td><input type="time" data-merge-field="startTime" value="${escapeHtml(row.startTime)}" placeholder="09:00"></td>
+      <td><input type="date" data-merge-field="endDate" value="${escapeHtml(row.endDate)}"></td>
+      <td><input type="time" data-merge-field="endTime" value="${escapeHtml(row.endTime)}" placeholder="10:00"></td>
+      <td class="merge-label"><input type="text" data-merge-field="label" value="${escapeHtml(row.label)}" maxlength="40" placeholder="例如 上午班"></td>
+      <td class="merge-act"><button type="button" class="link danger" data-merge-remove="${escapeHtml(row.uid)}">删除</button></td>
+    </tr>`).join('');
+}
+
+function collectMergePayload() {
+  return {
+    zoneId: el('merge-zone').value,
+    segments: state.mergeRows.map((row) => ({
+      startDate: row.startDate,
+      startTime: row.startTime,
+      endDate: row.endDate,
+      endTime: row.endTime,
+      label: row.label,
+    })),
+  };
+}
+
+// 输入改动即时同步回状态，重绘不会把用户正在填的内容清掉
+function syncMergeRow(uid, field, value) {
+  const row = state.mergeRows.find((item) => item.uid === uid);
+  if (row) row[field] = value;
+}
+
+// 服务端 field 形如 segments[2].startTime，把问题标到第 3 段对应的格子上
+function markMergeField(field) {
+  const match = /^segments\[(\d+)\](?:\.([a-zA-Z]+))?$/.exec(field || '');
+  if (!match) return;
+  const index = Number(match[1]);
+  const part = match[2] || '';
+  const row = el('merge-rows').children[index];
+  if (!row) return;
+  row.classList.add('invalid');
+  const selector = part ? `[data-merge-field="${part}"]` : 'input';
+  const input = row.querySelector(selector);
+  if (input) {
+    input.classList.add('invalid');
+    input.focus();
+  }
+}
+
+function clearMergeMarks() {
+  document.querySelectorAll('#merge-rows .invalid').forEach((node) => node.classList.remove('invalid'));
+}
+
+async function runMerge() {
+  clearNotice();
+  clearMergeMarks();
+  el('merge-result').classList.add('hidden');
+  if (state.mergeRows.length === 0) {
+    notify('请先添加至少一段当地时段', 'error');
+    return;
+  }
+  try {
+    const result = await request('/api/merge', { method: 'POST', body: JSON.stringify(collectMergePayload()) });
+    renderMergeResult(result);
+  } catch (err) {
+    notify(err.message, 'error');
+    if (err.field && err.field.startsWith('segments')) markMergeField(err.field);
+    if (err.field === 'zoneId') markField('mergeZone');
+  }
+}
+
+function sourceTags(sources) {
+  return sources.map((source) => {
+    const label = source.label ? `（${escapeHtml(source.label)}）` : '';
+    return `<span class="src-tag" title="${escapeHtml(source.startText)} ~ ${escapeHtml(source.endText)}，实际 ${escapeHtml(source.durationText)}${source.crossesDst ? '，跨夏令时' : ''}">第 ${source.index} 段${label}</span>`;
+  }).join('');
+}
+
+function renderMergeResult(result) {
+  el('merge-result').classList.remove('hidden');
+  el('merge-summary').textContent =
+    `${result.zone.name}（${result.zone.displayName}，${result.zone.offsetText}${result.zone.usesDst ? `，夏令时 ${result.zone.dstOffsetText}` : ''}）：`
+    + `合并前 ${result.beforeCount} 段，合并后 ${result.afterCount} 段，少了 ${result.joinedAwayCount} 段；`
+    + `原段钟面累加 ${result.rawTotalDurationText}，扣除重叠 ${result.overlapDurationText} 后，`
+    + `合并后总实际时长 ${result.totalDurationText}；段间留白 ${result.gapCount} 处，跨夏令时的原段 ${result.dstCrossCount} 段`;
+
+  el('merge-out-body').innerHTML = result.merged.map((item) => `<tr>
+      <td class="mono">第 ${item.index} 段${item.joined ? '<span class="tag on">已合并</span>' : '<span class="tag off">原样</span>'}</td>
+      <td class="mono">${escapeHtml(item.startText)}</td>
+      <td class="mono">${escapeHtml(item.endText)}</td>
+      <td class="mono"><strong>${escapeHtml(item.durationText)}</strong></td>
+      <td class="src-cell">${sourceTags(item.sources)}</td>
+    </tr>`).join('');
+
+  const gapWrap = el('merge-gap-wrap');
+  if (result.gaps.length > 0) {
+    gapWrap.classList.remove('hidden');
+    el('merge-gap-body').innerHTML = result.gaps.map((gap) => `<tr>
+        <td>第 ${gap.afterMergedIndex} 段结束到第 ${gap.afterMergedIndex + 1} 段开始（第 ${gap.afterMergedIndex + 1} 段之前）</td>
+        <td class="mono">${escapeHtml(gap.startText)}</td>
+        <td class="mono">${escapeHtml(gap.endText)}</td>
+        <td class="mono">${escapeHtml(gap.durationText)}</td>
+      </tr>`).join('');
+  } else {
+    gapWrap.classList.add('hidden');
+  }
+  el('merge-gap-empty').classList.toggle('hidden', result.gaps.length > 0);
+
+  el('merge-seg-body').innerHTML = result.segments.map((item) => `<tr>
+      <td class="mono">第 ${item.index} 段</td>
+      <td>${item.label ? escapeHtml(item.label) : '—'}</td>
+      <td class="mono">${escapeHtml(item.startText)}</td>
+      <td class="mono">${escapeHtml(item.endText)}</td>
+      <td class="mono">${escapeHtml(item.wallDurationText)}</td>
+      <td class="mono"><strong>${escapeHtml(item.durationText)}</strong>${item.crossesDst ? '<span class="tag warn">钟面与实际不一致</span>' : ''}</td>
+      <td>${item.crossesDst ? '<span class="tag warn">跨夏令时</span>' : '—'}</td>
+    </tr>`).join('');
+
+  el('merge-note').textContent = result.note;
+}
+
 // 列表上的操作用事件委托统一处理，列表重绘之后不需要重新绑定
 document.addEventListener('click', async (event) => {
   const node = event.target.closest('button');
@@ -304,7 +445,33 @@ document.addEventListener('click', async (event) => {
     } catch (err) {
       notify(err.message, 'error');
     }
+    return;
   }
+
+  if (node.dataset.mergeRemove) {
+    clearNotice();
+    const index = state.mergeRows.findIndex((item) => item.uid === node.dataset.mergeRemove);
+    if (index !== -1) {
+      state.mergeRows.splice(index, 1);
+      renderMergeRows();
+    }
+  }
+});
+
+// 时段行里的输入改动即时存回状态，避免重绘清空
+el('merge-rows').addEventListener('input', (event) => {
+  const input = event.target.closest('[data-merge-field]');
+  if (!input) return;
+  const rowNode = event.target.closest('tr[data-merge-uid]');
+  if (!rowNode) return;
+  syncMergeRow(rowNode.dataset.mergeUid, input.dataset.mergeField, input.value);
+});
+el('merge-rows').addEventListener('change', (event) => {
+  const input = event.target.closest('[data-merge-field]');
+  if (!input) return;
+  const rowNode = event.target.closest('tr[data-merge-uid]');
+  if (!rowNode) return;
+  syncMergeRow(rowNode.dataset.mergeUid, input.dataset.mergeField, input.value);
 });
 
 el('zone-form').addEventListener('submit', submitZone);
@@ -330,6 +497,13 @@ el('zone-filter-dst').addEventListener('change', () => {
   loadZones().catch((err) => notify(err.message, 'error'));
 });
 el('convert-run').addEventListener('click', runConvert);
+el('merge-add').addEventListener('click', () => {
+  clearNotice();
+  addMergeRow();
+});
+el('merge-run').addEventListener('click', () => {
+  runMerge().catch((err) => notify(err.message, 'error'));
+});
 el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, currentOperator());
 });
@@ -341,4 +515,10 @@ loadHealth();
 const now = new Date();
 el('convert-date').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 el('convert-time').value = '09:30';
+// 时段合并默认给出两行，日期预填今天，时刻留空由使用者填
+{
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  addMergeRow({ startDate: today, endDate: today });
+  addMergeRow({ startDate: today, endDate: today });
+}
 loadZones().catch((err) => notify(err.message, 'error'));

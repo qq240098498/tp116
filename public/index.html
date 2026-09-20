@@ -130,6 +130,88 @@
       </div>
       <p class="empty-tip hidden" id="convert-empty">还没有换算结果</p>
     </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>时段合并</h2>
+        <div class="filters">
+          <label class="inline" data-field="mergeZone">所属时区<select id="merge-zone"></select></label>
+          <button type="button" id="merge-add" class="ghost">添加一段</button>
+          <button type="button" id="merge-run">合并这些时段</button>
+        </div>
+      </div>
+      <p class="convert-meta">把同一地区的若干段当地时段填进来，重叠与首尾相接的会合成一段，只隔一分钟的真实留白会保留；跨夏令时的段按实际经过时长计算</p>
+      <div class="table-wrap">
+        <table class="grid merge-grid">
+          <thead>
+            <tr>
+              <th class="merge-idx">段号</th>
+              <th>开始日期</th>
+              <th>开始时刻</th>
+              <th>结束日期</th>
+              <th>结束时刻</th>
+              <th class="merge-label">备注（可选）</th>
+              <th class="merge-act">操作</th>
+            </tr>
+          </thead>
+          <tbody id="merge-rows"></tbody>
+        </table>
+      </div>
+
+      <div class="merge-result hidden" id="merge-result">
+        <p class="convert-meta" id="merge-summary"></p>
+        <h3 class="block-title">合并后的段（互不重叠）</h3>
+        <div class="table-wrap">
+          <table class="grid merge-out-grid">
+            <thead>
+              <tr>
+                <th>段号</th>
+                <th>当地开始</th>
+                <th>当地结束</th>
+                <th>实际时长</th>
+                <th>由原来哪几段合成</th>
+              </tr>
+            </thead>
+            <tbody id="merge-out-body"></tbody>
+          </table>
+        </div>
+        <p class="empty-tip hidden" id="merge-gap-empty">段与段首尾全部相接或重叠，没有留白</p>
+        <div id="merge-gap-wrap" class="hidden">
+          <h3 class="block-title">段间留白（没有被合并的真实空档）</h3>
+          <div class="table-wrap">
+            <table class="grid merge-out-grid">
+              <thead>
+                <tr>
+                  <th>留白位置</th>
+                  <th>留白开始</th>
+                  <th>留白结束</th>
+                  <th>留白时长</th>
+                </tr>
+              </thead>
+              <tbody id="merge-gap-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <h3 class="block-title">原段明细（钟面时长与实际时长对照）</h3>
+        <div class="table-wrap">
+          <table class="grid merge-out-grid">
+            <thead>
+              <tr>
+                <th>原段号</th>
+                <th>备注</th>
+                <th>开始</th>
+                <th>结束</th>
+                <th>钟面时长</th>
+                <th>实际时长</th>
+                <th>跨夏令时</th>
+              </tr>
+            </thead>
+            <tbody id="merge-seg-body"></tbody>
+          </table>
+        </div>
+        <p class="convert-meta" id="merge-note"></p>
+      </div>
+    </section>
   </main>
 
   <script src="app.js"></script>
