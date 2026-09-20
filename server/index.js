@@ -61,6 +61,15 @@ app.post('/api/convert', (req, res) => {
   }
 });
 
+// 当地时段合并：同一地区的若干段钟面时段折算成实际时刻后合并，重叠/相接/留白分别交代清楚
+app.post('/api/merge-intervals', (req, res) => {
+  try {
+    res.json(api.mergeIntervals(req.body || {}));
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
 // 未匹配到的接口路径统一返回说明，避免前端拿到一串页面内容
 app.use('/api', (_req, res) => {
   res.status(404).json({ error: { code: 'API_NOT_FOUND', message: '接口不存在', field: '' } });
@@ -70,7 +79,12 @@ app.use('/api', (_req, res) => {
 function sendError(res, err) {
   if (err instanceof api.ApiError) {
     return res.status(err.status).json({
-      error: { code: err.code, message: err.message, field: err.field },
+      error: {
+        code: err.code,
+        message: err.message,
+        field: err.field,
+        ...(Number.isInteger(err.segmentIndex) ? { segmentIndex: err.segmentIndex } : {}),
+      },
     });
   }
   console.error('[tp116] 处理请求时出现未预期的问题：', err);

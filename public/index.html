@@ -130,6 +130,53 @@
       </div>
       <p class="empty-tip hidden" id="convert-empty">还没有换算结果</p>
     </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>当地时段合并</h2>
+        <div class="filters">
+          <label class="inline" data-field="mergeZone">地区<select id="merge-zone"></select></label>
+          <button type="button" id="merge-add" class="ghost">加一段</button>
+          <button type="button" id="merge-clear" class="ghost">清空重填</button>
+          <button type="button" id="merge-run">合并时段</button>
+        </div>
+      </div>
+      <p class="convert-meta">填同一地区的几段当地起止时刻（中间只隔一分钟也会保留成两段；首尾正好相接才算同一段）。跨夏令时的时段按实际经过时长算，钟面相减的结果会一并列出对照。</p>
+      <div class="table-wrap">
+        <table class="grid merge-grid">
+          <thead>
+            <tr>
+              <th class="seg-no">段</th>
+              <th>标注（可选）</th>
+              <th>开始日期</th>
+              <th>开始时刻</th>
+              <th>结束日期</th>
+              <th>结束时刻</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="merge-rows"></tbody>
+        </table>
+      </div>
+
+      <div class="merge-result hidden" id="merge-result">
+        <div class="merge-summary" id="merge-summary"></div>
+        <p class="merge-notes hidden" id="merge-repeated-notes"></p>
+        <h3 class="merge-subhead">合并后的时段</h3>
+        <div class="merged-list" id="merged-list"></div>
+        <div class="merge-detail-row">
+          <div>
+            <h3 class="merge-subhead" id="merge-overlap-head">重叠明细</h3>
+            <div id="merge-overlaps"></div>
+          </div>
+          <div>
+            <h3 class="merge-subhead" id="merge-gap-head">留白明细</h3>
+            <div id="merge-gaps"></div>
+          </div>
+        </div>
+      </div>
+      <p class="empty-tip hidden" id="merge-empty">还没有合并结果</p>
+    </section>
   </main>
 
   <script src="app.js"></script>

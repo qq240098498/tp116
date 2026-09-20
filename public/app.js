@@ -5,6 +5,9 @@ const state = {
   counts: { total: 0, dstCount: 0, noDstCount: 0 },
   editingId: '',
   lastConvert: null,
+  mergeZones: [],
+  mergeRows: [],
+  lastMerge: null,
 };
 
 const MONTHS = [
@@ -33,6 +36,7 @@ async function request(path, options) {
     const failure = new Error(error.message || `请求失败（状态码 ${res.status}）`);
     failure.code = error.code || '';
     failure.field = error.field || '';
+    failure.segmentIndex = Number.isInteger(error.segmentIndex) ? error.segmentIndex : null;
     throw failure;
   }
   return payload;
@@ -280,6 +284,190 @@ function renderConvert(result) {
   el('convert-empty').classList.toggle('hidden', result.results.length > 0);
 }
 
+// ---------- 当地时段合并 ----------
+
+const MERGE_FIELD_KEYS = {
+  startDate: 'startDate',
+  startTime: 'startTime',
+  endDate: 'endDate',
+  endTime: 'endTime',
+  label: 'label',
+};
+
+function todayText() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function newMergeRow(preset) {
+  return {
+    label: (preset && preset.label) || '',
+    startDate: (preset && preset.startDate) || todayText(),
+    startTime: (preset && preset.startTime) || '09:00',
+    endDate: (preset && preset.endDate) || todayText(),
+    endTime: (preset && preset.endTime) || '10:00',
+  };
+}
+
+// 合并面板的地区下拉用未筛选的全量档案，避免被档案区的筛选条件藏掉
+async function loadMergeZones() {
+  const payload = await request('/api/zones');
+  state.mergeZones = payload.zones || [];
+  renderMergeZoneOptions();
+}
+
+function renderMergeZoneOptions() {
+  const select = el('merge-zone');
+  const current = select.value;
+  select.innerHTML = state.mergeZones
+    .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}　${escapeHtml(item.displayName)}${item.usesDst ? '（有夏令时）' : ''}</option>`)
+    .join('');
+  if (state.mergeZones.some((item) => item.id === current)) {
+    select.value = current;
+  } else {
+    const dstZone = state.mergeZones.find((item) => item.usesDst);
+    if (dstZone) select.value = dstZone.id;
+  }
+}
+
+function renderMergeRows() {
+  const body = el('merge-rows');
+  body.innerHTML = state.mergeRows.map((row, index) => `<tr class="merge-row" data-merge-row="${index}">
+      <td class="seg-no mono">第 ${index + 1} 段</td>
+      <td><input data-merge-input="label" placeholder="例如 早班" maxlength="30" value="${escapeHtml(row.label)}"></td>
+      <td><input type="date" data-merge-input="startDate" value="${escapeHtml(row.startDate)}"></td>
+      <td><input type="time" data-merge-input="startTime" value="${escapeHtml(row.startTime)}"></td>
+      <td><input type="date" data-merge-input="endDate" value="${escapeHtml(row.endDate)}"></td>
+      <td><input type="time" data-merge-input="endTime" value="${escapeHtml(row.endTime)}"></td>
+      <td class="actions"><button type="button" class="link danger" data-merge-remove="${index}">删除</button></td>
+    </tr>`).join('');
+}
+
+function clearMergeMarks() {
+  document.querySelectorAll('.merge-row.invalid').forEach((node) => node.classList.remove('invalid'));
+  document.querySelectorAll('.merge-row [data-merge-input].field-invalid').forEach((node) => node.classList.remove('field-invalid'));
+  el('merge-zone').closest('label').classList.remove('invalid');
+}
+
+function markMergeError(failure) {
+  if (Number.isInteger(failure.segmentIndex)) {
+    const row = document.querySelector(`[data-merge-row="${failure.segmentIndex}"]`);
+    if (row) {
+      row.classList.add('invalid');
+      const key = MERGE_FIELD_KEYS[failure.field];
+      const input = key ? row.querySelector(`[data-merge-input="${key}"]`) : null;
+      if (input) {
+        input.classList.add('field-invalid');
+        input.focus();
+      } else {
+        row.scrollIntoView({ block: 'nearest' });
+      }
+    }
+  } else if (failure.field === 'zoneId') {
+    el('merge-zone').closest('label').classList.add('invalid');
+  }
+}
+
+function wallText(wall) {
+  return `${wall.date} ${wall.time} ${wall.weekday}`;
+}
+
+function renderMergeResult(result) {
+  el('merge-result').classList.remove('hidden');
+  el('merge-empty').classList.add('hidden');
+
+  const overlapHint = result.overlapPairCount > 0
+    ? `，有 ${result.overlapPairCount} 处重叠（合计重复计入 ${result.overlapMinutes} 分钟）`
+    : '，没有重叠';
+  el('merge-summary').innerHTML = `
+    <div class="summary-card">
+      <span class="summary-label">地区</span>
+      <span class="summary-value">${escapeHtml(result.zone.name)}　${escapeHtml(result.zone.displayName)}${result.zone.usesDst ? '<span class="tag on">有夏令时</span>' : ''}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">合并前</span>
+      <span class="summary-value">${result.before.count} 段</span>
+      <span class="summary-sub">钟面相减合计 ${escapeHtml(result.before.wallDurationText)}　实际经过 ${escapeHtml(result.before.durationText)}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">合并后</span>
+      <span class="summary-value">${result.after.count} 段</span>
+      <span class="summary-sub">钟面相减合计 ${escapeHtml(result.after.wallDurationText)}　实际经过 <strong>${escapeHtml(result.after.durationText)}</strong></span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">留白</span>
+      <span class="summary-value">${result.gapCount} 处${escapeHtml(overlapHint)}</span>
+    </div>`;
+
+  const repeated = el('merge-repeated-notes');
+  if (result.repeatedNotes && result.repeatedNotes.length) {
+    repeated.textContent = result.repeatedNotes.join('；');
+    repeated.classList.remove('hidden');
+  } else {
+    repeated.classList.add('hidden');
+  }
+
+  el('merged-list').innerHTML = result.merged.map((group) => `
+    <div class="merged-card${group.crossesDst ? ' crosses-dst' : ''}">
+      <div class="merged-head">
+        <span class="merged-no">合并段 ${group.index}</span>
+        <span class="mono merged-range">${escapeHtml(wallText(group.start))} ～ ${escapeHtml(wallText(group.end))}</span>
+        ${group.crossesDst ? '<span class="tag warn">跨夏令时</span>' : ''}
+      </div>
+      <div class="merged-durations">
+        实际经过 <strong>${escapeHtml(group.durationText)}</strong>
+        ${group.wallDurationText !== group.durationText
+          ? `<span class="wall-diff">（钟面直接相减只有 ${escapeHtml(group.wallDurationText)}，少算/多算的部分来自夏令时切换）</span>`
+          : ''}
+      </div>
+      <ul class="source-list">
+        ${group.sources.map((src) => `<li>
+          <span class="src-no mono">原第 ${src.index} 段</span>
+          ${escapeHtml(src.label)}
+          <span class="src-range mono">${escapeHtml(wallText(src.start))} ～ ${escapeHtml(wallText(src.end))}</span>
+          <span class="src-dur">实际 ${escapeHtml(src.durationText)}${src.wallDurationText !== src.durationText ? `，钟面 ${escapeHtml(src.wallDurationText)}` : ''}</span>
+          ${src.fallRepeated ? '<span class="tag off">含秋季重复钟面</span>' : ''}
+        </li>`).join('')}
+      </ul>
+      ${group.crossesDst ? `<p class="dst-events">这一段内部经历 ${group.dstEventCount} 次夏令时切换：${group.dstEvents.map((e) => `${escapeHtml(e.kind)}（${escapeHtml(wallText(e.at))}）`).join('，')}</p>` : ''}
+    </div>`).join('');
+
+  el('merge-overlap-head').textContent = `重叠明细（${result.overlaps.length} 处）`;
+  el('merge-overlaps').innerHTML = result.overlaps.length
+    ? `<ul class="detail-list">${result.overlaps.map((o) => `<li>原第 ${o.aIndex} 段「${escapeHtml(o.aLabel)}」与原第 ${o.bIndex} 段「${escapeHtml(o.bLabel)}」在 <span class="mono">${escapeHtml(wallText(o.startWall))} ～ ${escapeHtml(wallText(o.endWall))}</span> 重叠，重复 <strong>${escapeHtml(o.durationText)}</strong></li>`).join('')}</ul>`
+    : '<p class="detail-empty">各段互不重叠</p>';
+
+  el('merge-gap-head').textContent = `留白明细（${result.gaps.length} 处）`;
+  el('merge-gaps').innerHTML = result.gaps.length
+    ? `<ul class="detail-list">${result.gaps.map((g) => `<li>合并段 ${g.afterIndex} 与 ${g.beforeIndex} 之间空着 <span class="mono">${escapeHtml(wallText(g.start))} ～ ${escapeHtml(wallText(g.end))}</span>，留白 <strong>${escapeHtml(g.durationText)}</strong>${g.minutes === 1 ? '（只隔一分钟，仍按两段保留）' : ''}</li>`).join('')}</ul>`
+    : '<p class="detail-empty">段与段之间没有留白</p>';
+}
+
+async function runMerge() {
+  clearNotice();
+  clearMergeMarks();
+  el('merge-result').classList.add('hidden');
+  const payload = {
+    zoneId: el('merge-zone').value,
+    intervals: state.mergeRows.map((row) => ({
+      label: row.label,
+      start: { date: row.startDate, time: row.startTime },
+      end: { date: row.endDate, time: row.endTime },
+    })),
+  };
+  try {
+    const result = await request('/api/merge-intervals', { method: 'POST', body: JSON.stringify(payload) });
+    state.lastMerge = result;
+    renderMergeResult(result);
+    notify(`合并完成：${result.before.count} 段并成 ${result.after.count} 段`, 'ok');
+  } catch (err) {
+    notify(err.message, 'error');
+    markMergeError(err);
+  }
+}
+
+// ---------- 事件绑定 ----------
+
 // 列表上的操作用事件委托统一处理，列表重绘之后不需要重新绑定
 document.addEventListener('click', async (event) => {
   const node = event.target.closest('button');
@@ -304,7 +492,25 @@ document.addEventListener('click', async (event) => {
     } catch (err) {
       notify(err.message, 'error');
     }
+    return;
   }
+
+  if (node.dataset.mergeRemove !== undefined) {
+    const index = Number(node.dataset.mergeRemove);
+    state.mergeRows.splice(index, 1);
+    renderMergeRows();
+    return;
+  }
+});
+
+// 合并面板的输入框直接回填到 state，重绘时不会丢
+document.addEventListener('input', (event) => {
+  const inputNode = event.target.closest('[data-merge-input]');
+  if (!inputNode) return;
+  const rowNode = event.target.closest('[data-merge-row]');
+  if (!rowNode) return;
+  const index = Number(rowNode.dataset.mergeRow);
+  state.mergeRows[index][inputNode.dataset.mergeInput] = inputNode.value;
 });
 
 el('zone-form').addEventListener('submit', submitZone);
@@ -330,6 +536,19 @@ el('zone-filter-dst').addEventListener('change', () => {
   loadZones().catch((err) => notify(err.message, 'error'));
 });
 el('convert-run').addEventListener('click', runConvert);
+el('merge-add').addEventListener('click', () => {
+  state.mergeRows.push(newMergeRow());
+  renderMergeRows();
+});
+el('merge-clear').addEventListener('click', () => {
+  state.mergeRows = [newMergeRow(), newMergeRow()];
+  state.lastMerge = null;
+  el('merge-result').classList.add('hidden');
+  el('merge-empty').classList.remove('hidden');
+  clearMergeMarks();
+  renderMergeRows();
+});
+el('merge-run').addEventListener('click', runMerge);
 el('operator').addEventListener('change', () => {
   window.localStorage.setItem(OPERATOR_KEY, currentOperator());
 });
@@ -342,3 +561,9 @@ const now = new Date();
 el('convert-date').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 el('convert-time').value = '09:30';
 loadZones().catch((err) => notify(err.message, 'error'));
+
+// 合并面板：地区用全量档案，初始给两段方便直接试
+state.mergeRows = [newMergeRow(), newMergeRow()];
+renderMergeRows();
+el('merge-empty').classList.remove('hidden');
+loadMergeZones().catch((err) => notify(err.message, 'error'));
